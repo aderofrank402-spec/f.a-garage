@@ -1655,10 +1655,19 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     
     <script>
-        // Navigation
-        window.addEventListener('scroll', () => {
-            document.querySelector('.navbar').classList.toggle('scrolled', window.scrollY > 50);
-        });
+        // Navigation (throttled + passive for smooth scroll)
+        var scrollTicking = false;
+        function onScroll() {
+            if (!scrollTicking) {
+                requestAnimationFrame(function() {
+                    var nav = document.querySelector('.navbar');
+                    if (nav) nav.classList.toggle('scrolled', window.scrollY > 50);
+                    scrollTicking = false;
+                });
+                scrollTicking = true;
+            }
+        }
+        window.addEventListener('scroll', onScroll, { passive: true });
 
         // Mobile Menu (lock background scroll when open)
         const menuBtn = document.querySelector('.menu-btn');
@@ -1684,29 +1693,42 @@
             }
         }
         function closeMobileMenu() {
+            if (!menuBtn || !mobileMenu) return;
             menuBtn.classList.remove('active');
             mobileMenu.classList.remove('active');
             setMenuScrollLock(false);
         }
-        menuBtn.addEventListener('click', () => {
+        function ensureScrollUnlocked() {
+            if (mobileMenu && !mobileMenu.classList.contains('active')) {
+                document.body.style.position = '';
+                document.body.style.top = '';
+                document.body.style.left = '';
+                document.body.style.right = '';
+                document.documentElement.style.overflow = '';
+                document.body.style.overflow = '';
+            }
+        }
+        if (menuBtn) menuBtn.addEventListener('click', function() {
             menuBtn.classList.toggle('active');
             mobileMenu.classList.toggle('active');
             setMenuScrollLock(mobileMenu.classList.contains('active'));
         });
-        document.querySelectorAll('.mobile-menu a').forEach(link => {
+        if (mobileMenu) document.querySelectorAll('.mobile-menu a').forEach(function(link) {
             link.addEventListener('click', closeMobileMenu);
         });
-        // Close when clicking outside the menu (on the main content/backdrop)
         document.addEventListener('click', function(e) {
-            if (!mobileMenu.classList.contains('active')) return;
+            if (!mobileMenu || !mobileMenu.classList.contains('active')) return;
             if (mobileMenu.contains(e.target) || menuBtn.contains(e.target)) return;
             closeMobileMenu();
         });
-        // Close when resizing to larger screen (desktop nav is shown instead)
         window.addEventListener('resize', function() {
-            if (window.innerWidth > 768 && mobileMenu.classList.contains('active')) {
+            if (window.innerWidth > 768 && mobileMenu && mobileMenu.classList.contains('active')) {
                 closeMobileMenu();
             }
+        });
+        document.addEventListener('visibilitychange', ensureScrollUnlocked);
+        window.addEventListener('pageshow', function(e) {
+            if (e.persisted) ensureScrollUnlocked();
         });
 
         // Hero: globe on the RIGHT (desktop); on smaller devices (<=768px) globe centered in background
@@ -1748,13 +1770,17 @@
                 camera.lookAt(1.0, 0, 0);
             }
 
+            var pixelRatio = window.devicePixelRatio || 1;
+            if (width <= 1024) pixelRatio = Math.min(pixelRatio, 1.5);
+            else pixelRatio = Math.min(pixelRatio, 2);
             const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setSize(width, height);
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.setPixelRatio(pixelRatio);
             renderer.setClearColor(0x000000, 1);
             container.appendChild(renderer.domElement);
 
             var globeXInit = isMobile() ? 0 : 5.0;
+            var segments = (width <= 768) ? 24 : 32;
 
             function addGlobeAndLogo(tex) {
                 if (tex) {
@@ -1762,7 +1788,7 @@
                     tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
                 }
 
-                var sphereGeom = new THREE.SphereGeometry(GLOBE_RADIUS, 64, 64);
+                var sphereGeom = new THREE.SphereGeometry(GLOBE_RADIUS, segments, segments);
                 var sphereMat = new THREE.MeshBasicMaterial({
                     color: 0xffffff,
                     wireframe: true,
@@ -1797,15 +1823,27 @@
                 startRenderLoop();
             });
 
+            var rafId = null;
+            function animate() {
+                rafId = requestAnimationFrame(animate);
+                if (globeSphere) globeSphere.rotation.y += ROTATION_SPEED;
+                if (logoPlane) logoPlane.lookAt(camera.position);
+                renderer.render(scene, camera);
+            }
             function startRenderLoop() {
-                function animate() {
-                    requestAnimationFrame(animate);
-                    if (globeSphere) globeSphere.rotation.y += ROTATION_SPEED;
-                    if (logoPlane) logoPlane.lookAt(camera.position);
-                    renderer.render(scene, camera);
-                }
+                if (rafId != null || document.hidden) return;
                 animate();
             }
+            function stopRenderLoop() {
+                if (rafId != null) {
+                    cancelAnimationFrame(rafId);
+                    rafId = null;
+                }
+            }
+            document.addEventListener('visibilitychange', function() {
+                if (document.hidden) stopRenderLoop();
+                else startRenderLoop();
+            });
 
             window.addEventListener('resize', function() {
                 var w = container.offsetWidth;
